@@ -1,0 +1,26 @@
+[
+  {
+    "id": 0,
+    "content": "IBM Content Navigator Task Manager provides five key functions: task assignment, task routing, task monitoring, task escalation, and task reporting. However, the following five functions are NOT supported with the Task Manager: (1) document version control integration, (2) custom workflow triggers based on document metadata changes, (3) real-time collaborative editing of task descriptions, (4) automated task archiving based on retention policies, and (5) cross-repository task delegation. These limitations are documented in the IBM Content Navigator Administration Guide version 3.0.x. Task Manager integration with external systems requires custom development using the Navigator REST API.",
+    "doc_name": "IBM_Content_Navigator_Administration_Guide.pdf",
+    "page_num": 147,
+    "metadata": {
+      "source": "IBM Documentation",
+      "section": "Task Manager Limitations",
+      "keywords": ["IBM Content Navigator", "Task Manager", "unsupported functions", "limitations"]
+    },
+    "embedding": null
+  },
+  {
+    "id": 1,
+    "content": "FileNet Content Manager deployment requires careful planning of the Content Engine and Process Engine components. The Content Engine handles document storage, metadata management, and security policies. The Process Engine manages workflow execution, task assignment, and business process automation. When deploying FileNet P8 Platform 5.5.x, administrators must configure the Object Store, define property templates, and set up security realms. FileNet Integration services provide connectivity between Content Engine, Process Engine, and external applications. The FileNet Deployment Manager automates the migration of configuration objects between development, test, and production environments. Common deployment issues include database connectivity problems, JNDI configuration errors, and security realm misconfigurations.",
+    "doc_name": "FileNet_Deployment_Best_Practices.pdf",
+    "page_num": 89,
+    "metadata": {
+      "source": "IBM Redbooks",
+      "section": "Deployment Architecture",
+      "keywords": ["FileNet", "Content Manager", "deployment", "Process Engine", "Content Engine"]
+    },
+    "embedding": null
+  }
+]
