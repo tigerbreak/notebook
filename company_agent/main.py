@@ -4,6 +4,7 @@
 
 import os
 import asyncio
+from typing import Optional
 
 from .tools import ToolRegistry
 from .tools.employees import GetEmployees
