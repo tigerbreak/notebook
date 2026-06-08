@@ -1,7 +1,5 @@
-"""
-主运行入口
-"""
 
+"""主运行入口 — 提供便捷的 run() 函数"""
 import os
 import asyncio
 from typing import Optional
@@ -11,19 +9,17 @@ from .tools.employees import GetEmployees
 from .tools.projects import GetProjects
 from .tools.metrics import GetMetrics
 from .tools.search import SearchCompany
-from .tools.rag import RAGSearch
 from .llm import LLMClient
 from .agent import AgentWithTools
 
 
 def create_registry(api_base_url: str = "http://localhost:8080") -> ToolRegistry:
-    """创建并注册所有工具的注册表"""
+    """创建并注册所有工具"""
     registry = ToolRegistry()
     registry.register(GetEmployees(api_base_url=api_base_url))
     registry.register(GetProjects(api_base_url=api_base_url))
     registry.register(GetMetrics(api_base_url=api_base_url))
     registry.register(SearchCompany(api_base_url=api_base_url))
-    registry.register(RAGSearch(api_base_url=api_base_url))
     return registry
 
 
@@ -31,20 +27,9 @@ async def run(
     query: str,
     api_key: Optional[str] = None,
     api_base_url: str = "http://localhost:8080",
-    max_steps: int = 3
+    max_steps: int = 3,
 ) -> str:
-    """
-    运行 Agent 的便捷函数
-    
-    Args:
-        query: 用户问题
-        api_key: LLM API Key（可选，不传则读环境变量 DEEPSEEK_API_KEY）
-        api_base_url: 内部 API 地址
-        max_steps: 最大推理步骤
-    
-    Returns:
-        Agent 的最终回答
-    """
+    """运行 Agent 的便捷函数"""
     registry = create_registry(api_base_url=api_base_url)
     llm = LLMClient(api_key=api_key)
     agent = AgentWithTools(llm=llm, registry=registry, max_steps=max_steps)
