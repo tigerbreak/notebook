@@ -4,12 +4,14 @@
 
 import os
 import asyncio
+from typing import Optional
 
 from .tools import ToolRegistry
 from .tools.employees import GetEmployees
 from .tools.projects import GetProjects
 from .tools.metrics import GetMetrics
 from .tools.search import SearchCompany
+from .tools.rag import RAGSearch
 from .llm import LLMClient
 from .agent import AgentWithTools
 
@@ -21,6 +23,7 @@ def create_registry(api_base_url: str = "http://localhost:8080") -> ToolRegistry
     registry.register(GetProjects(api_base_url=api_base_url))
     registry.register(GetMetrics(api_base_url=api_base_url))
     registry.register(SearchCompany(api_base_url=api_base_url))
+    registry.register(RAGSearch(api_base_url=api_base_url))
     return registry
 
 
