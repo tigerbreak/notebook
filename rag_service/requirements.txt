@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+openai
+sentence-transformers
+jieba
+rank-bm25
+numpy
+pydantic
+python-multipart
