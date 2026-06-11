@@ -1,8 +1,10 @@
 """Configuration for the Insurance Policy RAG Service."""
 
+import os
+
 # ── DeepSeek API ──────────────────────────────────────────────
-DEEPSEEK_API_KEY = "os.environ.get("DEEPSEEK_API_KEY", "")"
-DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
+DEEPSEEK_BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 DEEPSEEK_MODEL = "deepseek-v4-flash"
 LLM_TEMPERATURE = 0.1
 LLM_MAX_TOKENS = 2000

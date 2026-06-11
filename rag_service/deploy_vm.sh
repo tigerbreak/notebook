@@ -37,6 +37,7 @@ cd notebook && git pull && git checkout architecture-overview
 echo "=== 5. 启动服务 ==="
 cd rag_service
 pkill -f "uvicorn app:app" 2>/dev/null || true
+echo "⚠️  请先设置 DeepSeek API Key: export DEEPSEEK_API_KEY='your-key'"
 nohup python3 -m uvicorn app:app --host 0.0.0.0 --port 8000 > /tmp/rag_service.log 2>&1 &
 sleep 3
 
