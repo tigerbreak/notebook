@@ -1,7 +1,7 @@
 """Data models for the Insurance Policy RAG Service."""
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Tuple
+from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
 
 
@@ -36,6 +36,19 @@ class PolicyMeta:
                               f"    变更内容：{e.get('change','?')}"])
         return "\n".join(lines)
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "insurer": self.insurer,
+            "applicant": self.applicant,
+            "insured": self.insured,
+            "product": self.product,
+            "premium": self.premium,
+            "eff_date": self.eff_date,
+            "beneficiaries": self.beneficiaries,
+            "endorsements": self.endorsements,
+        }
+
 
 @dataclass
 class Chunk:
@@ -58,12 +71,22 @@ class SearchRequest(BaseModel):
     top_k: int = 5
 
 
+class ChunkItem(BaseModel):
+    cid: str
+    policy_id: str
+    page: int
+    heading: str
+    text: str
+    score: float
+    source: str = "hybrid"
+
+
 class SearchResponse(BaseModel):
     question: str
     answer: str
     policy_id: Optional[str] = None
-    chunks: List[Dict] = []
-    metadata: Optional[Dict] = None
+    chunks: List[ChunkItem] = []
+    metadata: Optional[Dict[str, Any]] = None
 
 
 class HealthResponse(BaseModel):
@@ -71,3 +94,19 @@ class HealthResponse(BaseModel):
     model: str = ""
     policies_indexed: int = 0
     chunks_indexed: int = 0
+    vector_db: str = ""
+    fulltext_db: str = ""
+    reranker: str = ""
+
+
+class UploadResponse(BaseModel):
+    task_id: str
+    status: str
+    message: str
+
+
+class PolicyDetailResponse(BaseModel):
+    policy_id: str
+    metadata: Optional[Dict[str, Any]] = None
+    chunks: List[ChunkItem] = []
+    page_count: int = 0

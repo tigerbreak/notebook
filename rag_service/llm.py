@@ -1,12 +1,21 @@
 """DeepSeek LLM integration."""
 
+import os
 from openai import OpenAI
 
 from config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
 from config import LLM_TEMPERATURE, LLM_MAX_TOKENS
 
 
-_client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
+# Load API key from .env if not already set
+if not DEEPSEEK_API_KEY:
+    from dotenv import load_dotenv
+    load_dotenv()
+
+_api_key = os.environ.get("DEEPSEEK_API_KEY", DEEPSEEK_API_KEY)
+_base_url = os.environ.get("DEEPSEEK_BASE_URL", DEEPSEEK_BASE_URL)
+
+_client = OpenAI(api_key=_api_key, base_url=_base_url)
 
 PROMPT_TEMPLATE = (
     "你是一位专业的保险理赔分析师。请根据以下保单上下文，回答用户的问题。\n\n"

@@ -344,7 +344,7 @@ class Reranker:
 from openai import OpenAI
 
 client = OpenAI(
-    api_key="sk-bf95ba0f0f354054bdc79e3101a971ae",
+    api_key="sk-your-key-here",
     base_url="https://api.deepseek.com"
 )
 

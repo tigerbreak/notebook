@@ -1,19 +1,36 @@
-"""Core retrieval engine: metadata extraction → chunking → dense/BM25 → RRF fusion."""
+"""Core retrieval engine: metadata extraction → chunking → Qdrant/ES → RRF → Reranker."""
 
+import os
 import re
+import logging
 import jieba
 import numpy as np
 from collections import defaultdict
-from typing import List, Optional, Dict, Tuple
-from rank_bm25 import BM25Okapi
-from sentence_transformers import SentenceTransformer
+from typing import List, Optional, Dict, Tuple, Any
 
 from config import (
     EMBEDDING_MODEL, RRF_K, RRF_ALPHA, DENSE_TOP_K, BM25_TOP_K,
-    FINAL_TOP_K, PARENT_MAX_CHARS, CHILD_MAX_CHARS, CHILD_OVERLAP,
+    FINAL_TOP_K, RERANK_TOP_K, PARENT_MAX_CHARS, CHILD_MAX_CHARS, CHILD_OVERLAP,
+    PG_HOST, PG_PORT, PG_DB, PG_USER, PG_PASSWORD, PG_VECTOR_DIM,
 )
 from models import PolicyMeta, Chunk
 from data import POLICIES
+
+log = logging.getLogger(__name__)
+
+# ── Global embedder cache ──
+_EMBEDDER_CACHE = {}
+
+
+def _get_embedder() -> "SentenceTransformer":
+    """Get or create the shared embedding model."""
+    if EMBEDDING_MODEL not in _EMBEDDER_CACHE:
+        from sentence_transformers import SentenceTransformer
+        os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+        log.info(f"🔄 加载 Embedding 模型 ({EMBEDDING_MODEL})…")
+        _EMBEDDER_CACHE[EMBEDDING_MODEL] = SentenceTransformer(EMBEDDING_MODEL)
+        log.info(f"✅ Embedding 模型加载完成 (dim={_EMBEDDER_CACHE[EMBEDDING_MODEL].get_embedding_dimension()})")
+    return _EMBEDDER_CACHE[EMBEDDING_MODEL]
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -132,7 +149,6 @@ def chunk_policy(policy: dict) -> List[Chunk]:
                            page=pn, type="parent", heading=heading, text=parent_text)
                 parents.append(pc)
             # Child chunks (smaller, for retrieval)
-            last = len(children)
             cs_text = body if heading else combined
             cs_text = cs_text.strip()
             for start in range(0, len(cs_text), CHILD_MAX_CHARS - CHILD_OVERLAP):
@@ -148,26 +164,209 @@ def chunk_policy(policy: dict) -> List[Chunk]:
 
 
 # ═══════════════════════════════════════════════════════════════
-# 3. Retrieval Indexes
+# 3. Tokenization (module-level for reuse)
+# ═══════════════════════════════════════════════════════════════
+
+def tokenize(text: str) -> List[str]:
+    """Tokenize Chinese text using jieba."""
+    tokens = []
+    for w in jieba.cut(text):
+        w = w.strip()
+        if w and w not in ("", " ", "\n", "|", "---", "**:"):
+            tokens.append(w.lower())
+    return tokens
+
+
+# ═══════════════════════════════════════════════════════════════
+# 4. PostgreSQL (pgvector) Index
+# ═══════════════════════════════════════════════════════════════
+
+TABLE_NAME = "policy_chunks"
+
+
+class PGVectorIndex:
+    """Vector + full-text index backed by PostgreSQL with pgvector extension."""
+
+    def __init__(self):
+        self.conn = None
+        self._ready = False
+
+    def connect(self) -> bool:
+        """Connect to PostgreSQL, enable pgvector, create schema."""
+        try:
+            import psycopg2
+            self.conn = psycopg2.connect(
+                host=PG_HOST, port=PG_PORT, dbname=PG_DB,
+                user=PG_USER, password=PG_PASSWORD,
+            )
+            self.conn.autocommit = True
+            cur = self.conn.cursor()
+            cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
+            self._ensure_schema()
+            self._ready = True
+            log.info(f"✅ PostgreSQL 连接成功 ({PG_HOST}:{PG_PORT})")
+            return True
+        except Exception as e:
+            log.warning(f"⚠️ PostgreSQL 连接失败（将使用内存检索）: {e}")
+            self._ready = False
+            return False
+
+    def _ensure_schema(self):
+        """Create table, indexes, and functions if not exist."""
+        cur = self.conn.cursor()
+        cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
+                chunk_id TEXT PRIMARY KEY,
+                policy_id TEXT NOT NULL,
+                page_number INTEGER NOT NULL,
+                heading TEXT DEFAULT '',
+                text TEXT NOT NULL,
+                chunk_type TEXT DEFAULT 'child',
+                parent_id TEXT DEFAULT '',
+                embedding vector({PG_VECTOR_DIM}),
+                tokens TEXT[] DEFAULT '{{}}'
+            )
+        """)
+        cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{TABLE_NAME}_policy ON {TABLE_NAME} (policy_id)")
+        cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{TABLE_NAME}_embedding ON {TABLE_NAME} USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)")
+        cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{TABLE_NAME}_tokens ON {TABLE_NAME} USING gin (tokens)")
+        log.info(f"📦 PostgreSQL schema 已就绪 ({TABLE_NAME}, dim={PG_VECTOR_DIM})")
+
+    def add_chunks(self, chunks: List[Chunk], embeddings: List[List[float]]):
+        """Insert chunks with vectors and tokens."""
+        if not self._ready:
+            return
+        try:
+            import psycopg2.extras
+            cur = self.conn.cursor()
+            values = []
+            for ch, emb in zip(chunks, embeddings):
+                t = tokenize(ch.text)
+                values.append((ch.cid, ch.pid, ch.page, ch.heading, ch.text,
+                               ch.type, ch.parent_id, emb, t))
+            psycopg2.extras.execute_values(
+                cur,
+                f"""
+                INSERT INTO {TABLE_NAME}
+                (chunk_id, policy_id, page_number, heading, text, chunk_type, parent_id, embedding, tokens)
+                VALUES %s
+                ON CONFLICT (chunk_id) DO UPDATE SET
+                    embedding = EXCLUDED.embedding,
+                    tokens = EXCLUDED.tokens
+                """,
+                values,
+                template="(%s, %s, %s, %s, %s, %s, %s, %s::vector, %s::text[])",
+            )
+            log.info(f"📤 PostgreSQL 写入 {len(values)} 个 chunks")
+        except Exception as e:
+            log.warning(f"⚠️ PostgreSQL 写入失败: {e}")
+
+    def vector_search(self, vector: List[float], top_k: int = DENSE_TOP_K,
+                      policy_id: Optional[str] = None) -> List[Tuple[Chunk, float]]:
+        """Cosine similarity search via pgvector <=> operator."""
+        if not self._ready:
+            return []
+        try:
+            cur = self.conn.cursor()
+            if policy_id:
+                cur.execute(f"""
+                    SELECT chunk_id, policy_id, page_number, heading, text, chunk_type, parent_id,
+                           1 - (embedding <=> %s::vector) AS score
+                    FROM {TABLE_NAME}
+                    WHERE chunk_type = 'child' AND policy_id = %s
+                    ORDER BY embedding <=> %s::vector
+                    LIMIT %s
+                """, (vector, policy_id, vector, top_k))
+            else:
+                cur.execute(f"""
+                    SELECT chunk_id, policy_id, page_number, heading, text, chunk_type, parent_id,
+                           1 - (embedding <=> %s::vector) AS score
+                    FROM {TABLE_NAME}
+                    WHERE chunk_type = 'child'
+                    ORDER BY embedding <=> %s::vector
+                    LIMIT %s
+                """, (vector, vector, top_k))
+            results = []
+            for row in cur.fetchall():
+                ch = Chunk(cid=row[0], pid=row[1], page=row[2],
+                           heading=row[3], text=row[4], type=row[5], parent_id=row[6])
+                results.append((ch, float(row[7])))
+            return results
+        except Exception as e:
+            log.warning(f"⚠️ PostgreSQL 向量检索失败: {e}")
+            return []
+
+    def fulltext_search(self, query: str, top_k: int = BM25_TOP_K,
+                        policy_id: Optional[str] = None) -> List[Tuple[Chunk, float]]:
+        """Full-text search using jieba token array overlap."""
+        if not self._ready:
+            return []
+        try:
+            query_tokens = tokenize(query)
+            if not query_tokens:
+                return []
+            cur = self.conn.cursor()
+            if policy_id:
+                cur.execute(f"""
+                    SELECT chunk_id, policy_id, page_number, heading, text, chunk_type, parent_id,
+                           cardinality(tokens::text[] & %s::text[]) AS score
+                    FROM {TABLE_NAME}
+                    WHERE chunk_type = 'child'
+                      AND policy_id = %s
+                      AND tokens && %s::text[]
+                    ORDER BY score DESC
+                    LIMIT %s
+                """, (query_tokens, policy_id, query_tokens, top_k))
+            else:
+                cur.execute(f"""
+                    SELECT chunk_id, policy_id, page_number, heading, text, chunk_type, parent_id,
+                           cardinality(tokens::text[] & %s::text[]) AS score
+                    FROM {TABLE_NAME}
+                    WHERE chunk_type = 'child'
+                      AND tokens && %s::text[]
+                    ORDER BY score DESC
+                    LIMIT %s
+                """, (query_tokens, query_tokens, top_k))
+            results = []
+            for row in cur.fetchall():
+                ch = Chunk(cid=row[0], pid=row[1], page=row[2],
+                           heading=row[3], text=row[4], type=row[5], parent_id=row[6])
+                results.append((ch, float(row[7])))
+            return results
+        except Exception as e:
+            log.warning(f"⚠️ PostgreSQL 全文检索失败: {e}")
+            return []
+
+    @property
+    def is_ready(self) -> bool:
+        return self._ready
+
+
+# ═══════════════════════════════════════════════════════════════
+# 4. Retrieval Engine (orchestrator)
 # ═══════════════════════════════════════════════════════════════
 
 class RetrievalEngine:
-    """Holds all indexes and provides hybrid search."""
+    """Orchestrates hybrid search across Qdrant/ES/memory + Reranker."""
 
     def __init__(self):
         self.policies = POLICIES
         self.metas: Dict[str, PolicyMeta] = {}
         self.chunks: List[Chunk] = []
         self.children: List[Chunk] = []
-        self.embedder: SentenceTransformer = None
-        self.dense_matrix: np.ndarray = None
-        self.bm25: BM25Okapi = None
-        self.tokenized: List[List[str]] = []
+        self.embedder = None
+        # Fallback in-memory indexes
+        self.dense_matrix: Optional[np.ndarray] = None
+        self.bm25 = None
+        self.tokenized_chunks: List[List[str]] = []
+        # External PostgreSQL + pgvector index
+        self.pg = PGVectorIndex()
+        self._reranker = None
         self._ready = False
 
     def build(self):
-        """Build all indexes from mock data."""
-        # Metadata & chunks
+        """Build indexes from mock data, connecting to PostgreSQL if available."""
+        # --- Metadata & chunks ---
         all_chunks = []
         for pol in self.policies:
             pid = pol["id"]
@@ -175,51 +374,108 @@ class RetrievalEngine:
             all_chunks.extend(chunk_policy(pol))
         self.chunks = all_chunks
         self.children = [c for c in all_chunks if c.type == "child"]
+        log.info(f"📄 解析完成: {len(self.metas)} 份保单, {len(self.chunks)} chunks")
 
-        # Embedding
-        print(f"🔄 加载 Embedding 模型 ({EMBEDDING_MODEL})…")
-        self.embedder = SentenceTransformer(EMBEDDING_MODEL)
+        # --- Embedding model ---
+        log.info(f"🔄 加载 Embedding 模型 ({EMBEDDING_MODEL})…")
+        self._load_embedder()
+
+        # --- Connect PostgreSQL ---
+        pg_ok = self.pg.connect()
+
+        # --- Compute embeddings ---
         ctexts = [c.text for c in self.children]
-        print(f"📐 编码 {len(ctexts)} 个子块向量…")
-        self.dense_matrix = self.embedder.encode(ctexts, show_progress_bar=False)
-        print(f"✅ 向量矩阵 shape: {self.dense_matrix.shape}")
+        log.info(f"📐 编码 {len(ctexts)} 个子块向量…")
+        embeddings = self.embedder.encode(ctexts, show_progress_bar=False)
+        log.info(f"✅ 向量矩阵 shape: {embeddings.shape}")
 
-        # BM25
-        self.tokenized = [self._tokenize(c.text) for c in self.children]
-        self.bm25 = BM25Okapi(self.tokenized)
-        print(f"✅ BM25 索引构建完成（词表大小: ~{len(set(w for t in self.tokenized for w in t))})")
+        # --- Write to PostgreSQL ---
+        if pg_ok:
+            self.pg.add_chunks(self.children, embeddings.tolist())
+
+        # --- Always build in-memory fallback ---
+        self.dense_matrix = embeddings
+        self.tokenized_chunks = [tokenize(c.text) for c in self.children]
+        from rank_bm25 import BM25Okapi
+        self.bm25 = BM25Okapi(self.tokenized_chunks)
+        vocab_size = len(set(w for t in self.tokenized_chunks for w in t))
+        log.info(f"✅ 内存 BM25 索引构建完成（词表大小: ~{vocab_size})")
 
         self._ready = True
         return self
 
-    @staticmethod
-    def _tokenize(text: str) -> List[str]:
-        tokens = []
-        for w in jieba.cut(text):
-            w = w.strip()
-            if w and w not in ("", " ", "\n", "|", "---", "**:"):
-                tokens.append(w.lower())
-        return tokens
+    def _load_embedder(self):
+        """Load the embedding model (uses module-level cache to avoid hangs)."""
+        self.embedder = _get_embedder()
 
-    def _dense_search(self, query: str, top_k: int = DENSE_TOP_K) -> List[Tuple[Chunk, float]]:
-        qv = self.embedder.encode([query])[0]
-        scores = np.dot(self.dense_matrix, qv) / (
-            np.linalg.norm(self.dense_matrix, axis=1) * np.linalg.norm(qv) + 1e-10
+    @property
+    def active_db(self) -> str:
+        if self.pg.is_ready:
+            return "pgvector"
+        return "memory"
+
+    @property
+    def active_fts(self) -> str:
+        if self.pg.is_ready:
+            return "pgvector"
+        return "bm25"
+
+    @property
+    def reranker_status(self) -> str:
+        if self._reranker and self._reranker.is_ready:
+            return "active"
+        return "inactive"
+
+    # ── Dense search ──
+
+    def _dense_search(self, query: str, top_k: int = DENSE_TOP_K,
+                      policy_id: Optional[str] = None) -> List[Tuple[Chunk, float]]:
+        qv = self.embedder.encode([query])[0].tolist()
+
+        # Try PostgreSQL pgvector first
+        if self.pg.is_ready:
+            results = self.pg.vector_search(qv, top_k, policy_id)
+            if results:
+                return results
+
+        # Fallback to in-memory cosine similarity
+        qv_np = np.array(qv)
+        scores = np.dot(self.dense_matrix, qv_np) / (
+            np.linalg.norm(self.dense_matrix, axis=1) * np.linalg.norm(qv_np) + 1e-10
         )
-        top = np.argsort(scores)[-top_k:][::-1]
-        return [(self.children[i], float(scores[i])) for i in top]
-
-    def _bm25_search(self, query: str, top_k: int = BM25_TOP_K) -> List[Tuple[Chunk, float]]:
-        qt = self._tokenize(query)
-        scores = self.bm25.get_scores(qt)
+        if policy_id:
+            mask = np.array([c.pid == policy_id for c in self.children])
+            scores[~mask] = -1
         top = np.argsort(scores)[-top_k:][::-1]
         return [(self.children[i], float(scores[i])) for i in top if scores[i] > 0]
 
+    # ── BM25 / Full-text search ──
+
+    def _bm25_search(self, query: str, top_k: int = BM25_TOP_K,
+                     policy_id: Optional[str] = None) -> List[Tuple[Chunk, float]]:
+        # Try PostgreSQL full-text first
+        if self.pg.is_ready:
+            results = self.pg.fulltext_search(query, top_k, policy_id)
+            if results:
+                return results
+
+        # Fallback to in-memory rank_bm25
+        qt = tokenize(query)
+        scores = self.bm25.get_scores(qt)
+        if policy_id:
+            for i, c in enumerate(self.children):
+                if c.pid != policy_id:
+                    scores[i] = -1
+        top = np.argsort(scores)[-top_k:][::-1]
+        return [(self.children[i], float(scores[i])) for i in top if scores[i] > 0]
+
+    # ── Hybrid search ──
+
     def hybrid_search(self, query: str, policy_id: Optional[str] = None,
                       top_k: int = FINAL_TOP_K) -> List[Tuple[Chunk, float, str]]:
-        """RRF fusion of dense + BM25, with optional metadata filter."""
-        dense_res = self._dense_search(query, DENSE_TOP_K)
-        bm25_res = self._bm25_search(query, BM25_TOP_K)
+        """RRF fusion of dense + BM25, optional reranker."""
+        dense_res = self._dense_search(query, DENSE_TOP_K, policy_id)
+        bm25_res = self._bm25_search(query, BM25_TOP_K, policy_id)
 
         scores = defaultdict(float)
         for rank, (ch, _) in enumerate(dense_res):
@@ -227,18 +483,24 @@ class RetrievalEngine:
         for rank, (ch, _) in enumerate(bm25_res):
             scores[ch.cid] += (1 - RRF_ALPHA) / (rank + RRF_K)
 
-        # Metadata filter
-        if policy_id:
-            scores = {cid: sc for cid, sc in scores.items()
-                      if self._chunk_by_id(cid).pid == policy_id}
+        ranked = sorted(scores.items(), key=lambda x: -x[1])
+        result = [(self._chunk_by_id(cid), sc, "hybrid") for cid, sc in ranked if self._chunk_by_id(cid)]
 
-        ranked = sorted(scores.items(), key=lambda x: -x[1])[:top_k]
-        result = []
-        for cid, sc in ranked:
-            ch = self._chunk_by_id(cid)
-            source = "hybrid"
-            result.append((ch, sc, source))
-        return result
+        # Reranker
+        if self._ensure_reranker():
+            result = self._reranker.rerank(query, result, top_k=RERANK_TOP_K)
+
+        return result[:top_k]
+
+    def _ensure_reranker(self) -> bool:
+        """Lazy-load the reranker model."""
+        if self._reranker is None:
+            from reranker import Reranker
+            self._reranker = Reranker()
+            self._reranker.load()
+        return self._reranker.is_ready
+
+    # ── Helpers ──
 
     def _chunk_by_id(self, cid: str) -> Optional[Chunk]:
         for c in self.chunks:
@@ -250,7 +512,6 @@ class RetrievalEngine:
                     max_chars: int = 3000) -> str:
         parts = []
         for ch, sc, src in chunks:
-            meta = self.metas.get(ch.pid)
             parts.append(
                 f"[保单 {ch.pid} | 第 {ch.page} 页 | 段落: {ch.heading or '(正文)'}]\n"
                 f"{ch.text}"
@@ -261,6 +522,19 @@ class RetrievalEngine:
     def get_metadata_str(self, policy_id: str) -> str:
         m = self.metas.get(policy_id)
         return m.to_prompt() if m else ""
+
+    def get_policy_detail(self, policy_id: str) -> Optional[Dict[str, Any]]:
+        meta = self.metas.get(policy_id)
+        if not meta:
+            return None
+        policy_chunks = [c for c in self.chunks if c.pid == policy_id]
+        pages = sorted({c.page for c in policy_chunks})
+        return {
+            "policy_id": policy_id,
+            "metadata": meta.to_dict(),
+            "page_count": len(pages),
+            "chunk_count": len(policy_chunks),
+        }
 
     @property
     def is_ready(self) -> bool:
