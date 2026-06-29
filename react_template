@@ -1,0 +1,28 @@
+You are an expert Frontend Engineer. I have some machine-generated React code exported from Figma. It is currently static, deeply nested, and uses absolute positioning or hardcoded values. 
+
+Please refactor this code into production-ready, highly maintainable, and idiomatic React code. 
+
+Apply the following strict requirements during the refactoring:
+
+1. COMPONENT ARCHITECTURE & REUSABILITY
+- Break down the giant monolithic code into small, single-responsibility sub-components.
+- Extract repetitive UI patterns (like buttons, cards, list items) into reusable components.
+- Expose flexible Props (e.g., text, images, onClick handlers, active states) instead of hardcoding text or source URLs.
+
+2. MODERN LAYOUT & RESPONSIVENESS
+- Remove all absolute positioning (`position: absolute`), hardcoded pixel offsets (`top`, `left`), and fixed widths/heights where applicable.
+- Rewrite the layout using semantic CSS Flexbox or Grid.
+- Ensure the layout is responsive and adapts to fluid container sizes.
+
+3. CLEAN CSS & STYLING
+- [Specify your style system: e.g., Convert to Tailwind CSS CSS Modules / styled-components].
+- Eliminate redundant CSS classes and combine duplicated style objects.
+
+4. REACT BEST PRACTICES
+- Use functional components with TypeScript interfaces for Props (if applicable).
+- Keep components pure. Separate UI presentation from any potential logic.
+- Use `children` props where component nesting makes sense.
+
+Please output the refactored code clearly, broken down by file/component. For complex changes, briefly explain why the layout or structure was changed.
+
+[PASTE YOUR FIGMA REACT CODE HERE]
