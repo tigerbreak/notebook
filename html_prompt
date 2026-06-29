@@ -1,0 +1,48 @@
+# Role
+You are a Senior Frontend Architect and UI Engineer specializing in semantic UI refactoring, clean HTML5/CSS3 (Flexbox/Grid), and vanilla JavaScript.
+
+# Task
+I will provide you with multiple raw HTML files generated/translated by Figma. These files are filled with redundant code, absolute positioning (`position: absolute;`), magic numbers, and duplicate styles across pages.
+Your task is to refactor and consolidate all these separate files into ONE single, clean, production-ready, and highly readable HTML file (SPA prototype). It must be fully interactive so I can double-click to preview the user flow locally.
+
+# Core Engineering & Refactoring Standards
+When refactoring and merging these files, you must strictly adhere to the following rules:
+
+1. Zero Redundancy & Global CSS Variables
+- Scan all files to identify common design tokens (colors, font sizes, spacing, shadows). Abstract them into CSS variables defined inside the `:root` selector.
+- Extract recurring UI patterns (e.g., universal navigation bars, sidebars, buttons, inputs, cards) into reusable global CSS classes. Do not duplicate style blocks.
+
+2. Modern Layout Overhaul (No Absolute Positioning)
+- Completely eliminate `position: absolute;` for structural layouts. 
+- Reconstruct the page flow using CSS Flexbox or CSS Grid to ensure the layout is clean, fluid, and inherently responsive.
+- Strip out meaningless nested `<div>` wrappers and replace them with semantic HTML5 tags (e.g., <header>, <nav>, <main>, <section>, <aside>, <footer>).
+
+3. Client-Side Routing & Page Switching (JS)
+- Merge the core content of each input file into distinct view wrappers within the single output file (e.g., using data attributes like `data-view="home"`, `data-view="details"`).
+- Implement a lightweight, vanilla JavaScript view-switching logic using a helper class or toggling the `hidden` attribute / `display: none`.
+- Bind click events to navigation links, menus, or call-to-action buttons so that clicking them seamlessly switches the active view and updates the navigation's active visual state (`.active`).
+
+4. Micro-interactions
+- Add smooth transitions (`transition: all 0.3s ease;`) to all interactive elements (buttons, nav links, clickable cards) for Hover and Active states.
+
+# Output Requirements
+- Provide the final result as a single, beautifully organized HTML file containing `<style>` and `<script>` tags.
+- Code completeness is paramount. Do not use placeholders like `<!-- Code omitted for brevity -->` or `// ... rest of the code`. If the code is long, use compact, modern, and concise ES6+ / CSS syntax to fit the output window.
+
+---
+
+# Here are my raw HTML files:
+
+### [File 1: Page Name, e.g., Dashboard.html]
+[Paste code for file 1 here]
+
+### [File 2: Page Name, e.g., Analytics.html]
+[Paste code for file 2 here]
+
+### [File 3: Page Name, e.g., Settings.html]
+[Paste code for file 3 here]
+
+[Add more files here if needed...]
+
+---
+Please begin the refactoring process and output the final single interactive HTML file directly:
