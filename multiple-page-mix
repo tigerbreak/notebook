@@ -1,0 +1,39 @@
+Role: Principal Frontend Architect & Clean Code Expert
+Task: Orchestrate and Refactor Scattered Machine-Generated Components into a Unified Feature Module
+
+Context:
+I am importing a raw code repository/folder from a design-to-code tool (Figma). It contains:
+1. One global layout blueprint (index.html)
+2. A main dashboard/list component (TimeDepositCaseManagement)
+3. An administrative sub-view component (TimeDepositCaseDetail)
+
+Goal:
+Analyze the structural topology, behavioral affinity, and layout tree of these files. Refactor and blend them into a highly robust, performant, and production-ready React module container.
+
+Strict Technical Specs:
+
+1. ARCHITECTURAL PATTERN & RESTRUCTURING
+- Implement the "Container-Component" (Smart/Dumb) design pattern.
+- Generate a top-level orchestrator named `TimeDepositCaseContainer.tsx`. This container must maintain the state machine for view navigation (`currentView: 'LIST' | 'DETAIL'`) and contextual payload (`selectedCaseId: string | null`).
+- Parse `index.html` to separate the persistent "Application Shell" (e.g., Global Header, Sidebar navigation) from the dynamic "Viewport Area" (Main Content).
+- The Application Shell must remain static in the template, while the Viewport Area dynamically hot-swaps between the List and Detail components via declarative state logic.
+
+2. REVERSE DATA FLOW & COUPLING ADAPTATION
+- Inspect the sub-components and perform "State Lifting" where necessary.
+- Inject inversion-of-control callbacks into the presenter components:
+  * For the List component, add an `onCaseSelect(id: string): void` prop triggered by clicking the Case ID.
+  * For the Detail component, add an `onBack(): void` prop mapped to the header back-arrow, ensuring a graceful reverse flow to the main list.
+- Provide a clear TypeScript interface (or PropTypes) definition for the refactored props of each file.
+
+3. LAYOUT LIQUIDITY & STYLING HYGIENE
+- Completely eradicate all absolute positioning metrics (`position: absolute`, hardcoded `top`/`left` pixel offsets) derived from Figma's canvas coordinate space.
+- Re-architect the core wrapper using standard CSS Grid or Flexbox alignment to guarantee 100% responsive fluid behavior.
+- Ensure styling parity using [Specify: Tailwind CSS / CSS Modules].
+
+Output Deliverables:
+1. Recommended Directory Tree for this module.
+2. The complete code for the new orchestrator component.
+3. Precise, block-by-block code diff instructions for updating the existing components to fit the new props interface.
+
+---
+[PASTE/UPLOAD ALL THE RELEVANT SOURCE CODES BELOW]
