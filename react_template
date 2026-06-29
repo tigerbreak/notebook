@@ -26,3 +26,8 @@ Apply the following strict requirements during the refactoring:
 Please output the refactored code clearly, broken down by file/component. For complex changes, briefly explain why the layout or structure was changed.
 
 [PASTE YOUR FIGMA REACT CODE HERE]
+
+1. 交互与状态管理（新要求）：
+- 实现点击交互：当用户点击【Case ID】（或对应的列表项/按钮）时，触发页面切换或组件更新。
+- 模拟页面路由/切换逻辑：在组件内部引入状态（如 `useState`），或者预留路由占位符。当点击 Case ID 时，动态渲染对应的【XX 页面】（例如：Admin 管理后台页面）。
+- 添加交互反馈：为所有可点击的元素（如 Case ID、按钮、导航）添加标准的悬停（Hover）和激活（Active）视觉效果。
